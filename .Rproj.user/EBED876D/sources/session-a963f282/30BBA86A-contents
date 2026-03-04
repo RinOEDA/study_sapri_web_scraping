@@ -27,8 +27,135 @@ library(rvest)
 
 ```{r, echo=FALSE}
 
-read_html("https://shingakunet.com/bunnya/")
+
+
+category_nodes <-
+  base_html |> 
+  html_elements(".indexWork__inner h2 a")
+
+
+df_category <-
+  tibble(
+    genre = category_nodes |> html_text2(),
+    link_url = category_nodes |> html_attr("href")
+  ) |> 
+  mutate(
+    full_url =
+      ifelse(
+        str_detect(link_url, "^/"),
+        str_c("https://shingakunet.com", link_url),
+        link_url
+      )
+  )
+
+target_nodes <-
+  base_html |> 
+  html_elements(".indexWork__inner h2 a")
+
+df_shikaku <-
+  tibble(
+    qualification = target_nodes |> html_text2(),
+    link_url      = target_nodes |> html_attr("href")
+  ) |> 
+  mutate(
+    full_url =
+      if_else(
+        str_detect(link_url, "^/"),
+        str_c("https://shingakunet.com", link_url),
+        link_url
+      )
+  )
 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+最初のページから、資格のカテゴリをtibbleで取得する。
+
+```{r}
+
+# 最初のページのURLを取得
+base_url <- "https://shingakunet.com/bunnya/"
+
+# そのページのHTMLを取得
+base_html <- read_html(base_url)
+
+# カテゴリの入るCSSセレクタを取得する
+category_nodes <-
+  base_html |> 
+  html_elements(".indexWork__inner h2 a")
+
+# カテゴリの名前とその先のURLを取得する
+df_category <-
+  tibble(
+    # category_nodesから文字列を読み取る
+    category = category_nodes |> html_text2(),
+    # category_nodesからURLを読み取る
+    link_url = category_nodes |> html_attr("href")
+  ) |> 
+  mutate(
+    full_url =
+      if_else(
+        str_detect(link_url, "^/"),
+        str_c("https://shingakunet.com", link_url),
+        # /から始まるURLが取得されるので、完全なものに直す
+        link_url
+      )
+  )
+
+```
+
+各カテゴリのページから、すべての資格名を取得する関数を定義する。
+
+```{r}
+
+get_qualifications <-
+  function(category_url){
+    Sys.sleep(1) # サーバの負担軽減のため、毎回1秒待つ
+    
+    category_html <- read_html(category_url)
+    # 各カテゴリのページを開く
+    
+    qualifications_nodes <-
+      category_html |> 
+      html_elements(".indexWork__inner h2 a")
+    # 資格の情報が入っているCSSセレクタから、すべての資格の情報を取得
+    
+    df_qualifications <-
+      tibble(
+        qualification = qualifications_nodes |> html_text2(),
+        link_url = qualifications_nodes |> html_attr("href")
+      ) |> 
+      mutate(
+        full_link =
+          if_else(
+            str_detect(link_url, "^/"),
+            str_c("https://shingakunet.com", link_url),
+            link_url
+          )
+      )
+    
+    return(df_qualifications)
+  }
+
+```
+
+すべてのカテゴリについてこれを実行し、すべての資格をまとめた1つのデータフレームを作成する。
+
+```{r}
+
+df_all_qualifications <-
+  df_category$full_url |>
+  map_dfr(get_qualifications, .progress = T)
+
+df_category$full_url[1] |> get_qualifications()
+
+```
+
+
+各資格のページから、「～件から検索」というボタンを押した先のリンクを取得する。
+
+```{r}
+
+
+
+
+```
