@@ -24,50 +24,6 @@ library(rvest)
 ```
 
 
-
-```{r, echo=FALSE}
-
-
-
-category_nodes <-
-  base_html |> 
-  html_elements(".indexWork__inner h2 a")
-
-
-df_category <-
-  tibble(
-    genre = category_nodes |> html_text2(),
-    link_url = category_nodes |> html_attr("href")
-  ) |> 
-  mutate(
-    full_url =
-      ifelse(
-        str_detect(link_url, "^/"),
-        str_c("https://shingakunet.com", link_url),
-        link_url
-      )
-  )
-
-target_nodes <-
-  base_html |> 
-  html_elements(".indexWork__inner h2 a")
-
-df_shikaku <-
-  tibble(
-    qualification = target_nodes |> html_text2(),
-    link_url      = target_nodes |> html_attr("href")
-  ) |> 
-  mutate(
-    full_url =
-      if_else(
-        str_detect(link_url, "^/"),
-        str_c("https://shingakunet.com", link_url),
-        link_url
-      )
-  )
-
-```
-
 最初のページから、資格のカテゴリをtibbleで取得する。
 
 ```{r}
@@ -151,9 +107,111 @@ df_category$full_url[1] |> get_qualifications()
 ```
 
 
-各資格のページから、「～件から検索」というボタンを押した先のリンクを取得する。
+各資格のページから、「～件から検索」というボタンを押した先のリンクを取得する関数を定義する。
 
 ```{r}
+
+get_kensaku <-
+  function(qualification_link){
+    
+    Sys.sleep(1)
+    
+    # それぞれの資格のページを取得
+    qualification_html <- read_html(qualification_link)
+    
+    # CSSセレクタを取得
+    kensaku_nodes <-
+      qualification_html |> 
+      html_elements(
+        ".workShikaku .jumbotron .jumbotron__contents .jumbotron__search .jumbotron__searchLinkMulti .jumbotron__searchLinkMulti--other a"
+      )
+    
+    #kensu_nodes <-
+    #  qualification_html |> 
+    #  html_elements(
+    #    ".js-jumbotron__searchLinkMultiIcon--searchText jumbotron__searchLinkMultiIcon--searchText "
+    #  )
+    
+    # CSSセレクタから「～件から検索」を押した後のURLを取得
+    df_kensaku <-
+      tibble(
+        #kensu = kensu_nodes |> html_text2(),
+        link_url = kensaku_nodes |> html_attr("href")
+      ) |> 
+      mutate(
+        link_l = str_extract(link_url, "(?<=keitoCd=)[^&]+"),
+        link_m = str_extract(link_url, "(?<=shigotoCategoryCd=)[^&]+"),
+        link_s = str_extract(link_url, "(?<=shigotoCd=)[^&]+"),
+        # (?<= ...) で...の直後から開始
+        # [^ ...] で...以外なら取得
+        # + で任意の回数
+        full_link =
+          str_c(
+            "https://shingakunet.com/searchList/jl_",
+            link_l,
+            "/jm_",
+            link_m,
+            "/js_",
+            link_s,
+            "/"
+          )
+      )
+    
+    return(df_kensaku)
+    
+  }
+
+```
+
+すべての資格についてこれを実行し、すべての資格をまとめた1つのデータフレームを作成する。
+
+```{r}
+
+df_all_qualifications$full_link[1] |>
+  read_html() |> 
+  html_elements(
+    ".workShikaku .jumbotron .jumbotron__contents .jumbotron__search .jumbotron__searchLinkMulti .jumbotron__searchLinkMulti--other a"
+  ) |> 
+  html_attr("href")
+    
+df_all_qualifications$full_link[1] |>
+  read_html() |> 
+  html_elements(
+    ".js-jumbotron__searchLinkMultiIcon--searchText[data-koshu-num='0']"
+  ) |> 
+  html_text2()
+
+tibble(
+        kensu = kensu_nodes |> html_text2(),
+        link_url = kensaku_nodes |> html_attr("href")
+      ) |> 
+      mutate(
+        link_l = str_extract(link_url, "(?<=keitoCd=)[^&]+"),
+        link_m = str_extract(link_url, "(?<=shigotoCategoryCd=)[^&]+"),
+        link_s = str_extract(link_url, "(?<=shigotoCd=)[^&]+"),
+        # (?<= ...) で...の直後から開始
+        # [^ ...] で...以外なら取得
+        # + で任意の回数
+        full_link =
+          str_c(
+            "https://shingakunet.com/searchList/jl_",
+            link_l,
+            "/jm_",
+            link_m,
+            "/js_",
+            link_s,
+            "/"
+          )
+      )
+
+
+
+df_all_qualifications$full_link[1] |> get_kensaku()
+
+df_all_qualifications <-
+  df_category$full_url |>
+  map_dfr(get_qualifications, .progress = T)
+
 
 
 

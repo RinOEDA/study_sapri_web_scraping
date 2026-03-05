@@ -1,4 +1,0 @@
-"0","    html <- read_html(target_url)
-"
-"2","エラー: オブジェクト 'target_url' がありません
-"
