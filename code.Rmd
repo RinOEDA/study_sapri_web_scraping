@@ -416,12 +416,47 @@ df_school_urls <-
 ```{r}
 
 get_school_names <-
-  function(school_page){
+  function(school_url){
     
     Sys.sleep(1)
     
-    school_html <- read_html(school_pages)
+    school_html <- read_html(school_url)
+    
+    school_names <-
+      school_html |> 
+      html_elements(
+        "div.__shi_l_row.__shi_l_contents_top div.__shi_h_fl_l.__shi_l_fix_580 h2  a"
+      ) |> 
+      html_text2()
+    
+    # 仮に0件だった場合、NAが1つだけのベクトルに置き換える。
+    
+    if (length(school_names) == 0) {
+      school_names <- c(NA)
+    }
+    
+    school_count <-
+      length(school_names)
+    
+    df_all_schools <-
+      tibble(
+        school_num = 1:school_count,
+        all_school_names = school_names
+      )
+    
+    return(df_all_schools)
   }
+
+
+df_school_urls |> 
+  slice(1:4) |> 
+  mutate(
+    # get_school_pagesが返すtibbleを、丸ごとsearch_data列に格納
+    all_school_names = map(all_school_urls, get_school_names, .progress = TRUE)
+  ) |> 
+  # 格納されたtibbleを縦に展開
+  unnest(all_school_names)
+
 
 
 ```
