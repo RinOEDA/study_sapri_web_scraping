@@ -414,7 +414,25 @@ df_all_schools <-
 
 ```
 
+
 ### データのチェック
+
+df_all_qualificationsにおいて、各カテゴリの資格の数の合計が行数と一致していることを確認した。
+
+```{r}
+
+df_all_qualifications |> 
+  group_by(category) |> 
+  summarise(
+    num_qualifications = first(num_qualifications),
+    .groups = "drop"
+  ) |> 
+  summarise(
+    sum(num_qualifications, na.rm = T),
+    num_NA = sum(is.na(num_qualifications))
+  )
+
+```
 
 最終的に興味のあるall_school_namesがNAになっているものを表示し、実際にホームページで学校が0件ヒットするということを確認した。
 
@@ -437,22 +455,15 @@ df_all_schools |>
 
 ### データの出力
 
-作成した表を整理して出力する。
+複数のカテゴリにまたがる資格が存在するため、資格ごとにユニークな学校名を取得して、それを出力ファイルとする。
 
 ```{r}
 
 df_output <-
   df_all_schools |> 
-  select(
-    category,               # 資格のカテゴリ名
-    category_full_url,      # そのカテゴリのURL
-    qualification,          # 資格名
-    qualification_full_url, # その資格のURL
-    page_num,               # その資格の学校を検索したときのページ番号
-    all_school_urls,        # その資格の学校を検索したときのURL
-    school_num,             # その資格の学校の通し番号
-    all_school_names        # 学校名
-  )
+  select(qualification, all_school_names) |> 
+  group_by(qualification) |> 
+  distinct(all_school_names)
 
 write_excel_csv(df_output, "output.csv")
 
