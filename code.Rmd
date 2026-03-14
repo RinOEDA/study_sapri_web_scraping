@@ -72,15 +72,39 @@ get_qualifications <-
     
     qualifications_nodes <-
       category_html |> 
-      html_elements(".indexWork__inner h2 a")
-    # 資格の情報が入っているCSSセレクタから、すべての資格の情報を取得
+      html_elements("th div.indexWork__inner")
+    # 資格の名前情報が入っているCSSセレクタを選択し、すべての資格の情報を取得
     
     df_qualifications <-
       tibble(
-        qualification = qualifications_nodes |> html_text2(),
-        qualification_link_url = qualifications_nodes |> html_attr("href")
+        # 資格の名前を取得
+        qualification =
+          qualifications_nodes |>
+          html_elements("h2 a") |> 
+          html_text2(),
+        
+        # 押下先のリンクを取得
+        qualification_link_url =
+          qualifications_nodes |> 
+          html_elements("h2 a") |>
+          html_attr("href"),
+        
+        # 画像の代替テキストから、「仕事」ではなく「資格」なのかを判定
+        is_shikaku =
+          qualifications_nodes |> 
+          map_lgl(\(node){
+            alt <- node |> html_elements("img") |> html_attr("alt")
+            "資格" %in% alt
+          })
+      ) |> 
+      filter(
+        is_shikaku # 「資格」と書かれているものだけに限定
       ) |> 
       mutate(
+        # 後の確認のため、各カテゴリの資格の数を取得
+        num_qualifications = n(),
+        
+        # 取得したリンクから綺麗なURLを作成する
         qualification_full_url =
           if_else(
             str_detect(qualification_link_url, "^/"),
@@ -92,6 +116,9 @@ get_qualifications <-
     return(df_qualifications)
   }
 
+df_category$category_full_url[1] |> 
+  get_qualifications()
+
 ```
 
 すべてのカテゴリについてこれを実行し、すべての資格をまとめた1つのデータフレームを作成する。
@@ -99,13 +126,20 @@ get_qualifications <-
 ```{r}
 
 df_all_qualifications <-
-  df_category$category_full_url |>
-  map_dfr(get_qualifications, .progress = T)
+  df_category |> 
+  mutate(
+    all_qualifications =
+      category_full_url |> 
+      map(get_qualifications, .progress = T)
+  ) |> 
+  unnest(all_qualifications, keep_empty = TRUE
+         # 「資格」が存在しないカテゴリも保存　
+         )
 
 ```
 
 
-各資格のページから、「～件から検索」というボタンを押した先のリンクと、「～件」の件数を取得し、見るべき学校のリンク表を作成する関数を定義する。
+各資格のページから、「～件から検索」というボタンを押した先のリンクを取得する関数を定義する。
 
 ```{r}
 
@@ -114,18 +148,31 @@ get_school_pages <-
     
     Sys.sleep(1)
     
+    # 資格が存在しない場合、すべてNAの1行を返す
+    
+    if (is.na(qualification_full_url)) {
+      df_school_pages <-
+        tibble(
+          page_num = NA,
+          all_school_urls = NA
+        )
+      
+      return(df_school_pages)
+    }
+    
     # それぞれの資格のページを取得
+    
     qualification_html <- read_html(qualification_full_url)
     
-    
     # ページ下部の「大学・短大を探す」部分のCSSセレクタを取得
+    
     kensaku_nodes <-
       qualification_html |> 
       html_element(
         "div.indexWork div.workShikaku div.shigotoShikakuContentsBox__buttonWrapper ul li a"
       )
     
-    # リンクから必要な部分を抽出
+    # リンクを取得し、必要な要素を抽出
     
     schools_link_url = kensaku_nodes |> html_attr("href")
     
@@ -133,7 +180,7 @@ get_school_pages <-
     schools_link_m = str_extract(schools_link_url, "(?<=category_)[^/]+")
     schools_link_s = str_extract(schools_link_url, "(?<=shigoto_)[^/]+")
     # "(?<=...)"で、...の直後から始める
-    # "[^...]"で...以外だとTRUE
+    # "[^...]"で...以外が連続する部分をまとめて取得
     
     
     # 検索ボタンに「～件から」と表示されているときとそうでないときで、押下先のリンクが異なる可能性がある。
@@ -159,7 +206,6 @@ get_school_pages <-
         str_extract(schools_link_url, "(?<=shikakuS_)[^/]+"),
         schools_link_s
       )
-      
     
     # 同時に、押下するボタンのCSSセレクタを取得し、そこから「～件から」と表示されているかどうか判定していく。
     
@@ -170,10 +216,11 @@ get_school_pages <-
         # data-koshu-numが存在しない、または存在するならば0、という条件で検索
       )
     
+    # 「検索」部分のテキストを取得
+    
     kensaku_botan_text <-
       kensaku_botan_nodes |> 
       html_text2()
-    
     
     # 押下後のフルリンクを作成
 
@@ -190,6 +237,7 @@ get_school_pages <-
           "/"
         ),
         str_c(
+          # 「～件から」と表示されていない場合はこちらのリンクを作成する
           "https://shingakunet.com/searchList/ql_",
           schools_link_l,
           "/qm_",
@@ -223,25 +271,34 @@ get_school_pages <-
       str_remove_all("[^0-9]") |> 
       as.numeric()
     
+    # 件数が0だった場合、すべてNAの表を1行だけ返す
+    
+    if (is.na(kensu)) {
+      df_school_pages <-
+        tibble(
+          kensu,
+          page_num = NA,
+          all_school_urls = NA
+        )
+      
+      return(df_school_pages)
+    }
+    
+    num_page <-
+      if_else(
+        kensu %% 20 == 0,
+        kensu %/% 20,
+        kensu %/% 20 + 1
+      )
     
     # tibbleにまとめる
-    # 件数が0だった場合に備える
-    
-    if (!is.na(kensu)) {
-      df_school_pages <-
-        tibble(
-          page_num = 1:(kensu%/%20+1),
-          all_school_urls = str_c(schools_full_url, "?pn=", 1:(kensu%/%20+1))
-          # スライスの形で、1つの変数を縦に伸ばして表を作ることができる。
-        )
-    }else{
-      df_school_pages <-
-        tibble(
-          page_num = 1,
-          all_school_urls = str_c(schools_full_url, "?pn=", 1)
-          # スライスの形で、1つの変数を縦に伸ばして表を作ることができる。
-        )
-    }
+    df_school_pages <-
+      tibble(
+        kensu = rep(kensu, times = num_page),
+        page_num = 1:num_page,
+        all_school_urls = str_c(schools_full_url, "?pn=", 1:num_page)
+        # スライスの形で、1つの変数を縦に伸ばして表を作ることができる
+      )
     
     
     print(schools_full_url)
@@ -250,149 +307,6 @@ get_school_pages <-
   }
 
 ```
-
-検証用
-
-```{r}
-
-# それぞれの資格のページを取得
-kensho_qualification_html <-
-  df_all_qualifications$qualification_full_url[61] |> 
-  read_html()
-
-
-# ページ下部の「大学・短大を探す」部分のCSSセレクタを取得
-kensho_kensaku_nodes <-
-  kensho_qualification_html |> 
-  html_element(
-    "div.indexWork div.workShikaku div.shigotoShikakuContentsBox__buttonWrapper ul li a"
-  )
-
-# リンクから必要な部分を抽出
-
-kensho_schools_link_url = kensho_kensaku_nodes |> html_attr("href")
-
-kensho_schools_link_l = str_extract(kensho_schools_link_url, "(?<=keito_)[^/]+")
-kensho_schools_link_m = str_extract(kensho_schools_link_url, "(?<=category_)[^/]+")
-kensho_schools_link_s = str_extract(kensho_schools_link_url, "(?<=shigoto_)[^/]+")
-# "(?<=...)"で、...の直後から始める
-# "[^...]"で...以外だとTRUE
-
-
-# 検索ボタンに「～件から」と表示されているときとそうでないときで、押下先のリンクが異なる可能性がある。
-# その場合に合わせて、変更する。
-
-kensho_schools_link_l = 
-  if_else(
-    is.na(kensho_schools_link_l),
-    str_extract(kensho_schools_link_url, "(?<=shikakuL_)[^/]+"),
-    kensho_schools_link_l
-  )
-
-kensho_schools_link_m = 
-  if_else(
-    is.na(kensho_schools_link_m),
-    str_extract(kensho_schools_link_url, "(?<=shikakuM_)[^/]+"),
-    kensho_schools_link_m
-  )
-
-kensho_schools_link_s = 
-  if_else(
-    is.na(kensho_schools_link_s),
-    str_extract(kensho_schools_link_url, "(?<=shikakuS_)[^/]+"),
-    kensho_schools_link_s
-  )
-  
-
-# 同時に、押下するボタンのCSSセレクタを取得し、そこから「～件から」と表示されているかどうか判定していく。
-
-kensho_kensaku_botan_nodes <-
-  kensho_qualification_html |> 
-  html_element(
-    "div.jumbotron__searchLinkMultiIcon--searchText:not([data-koshu-num]), div.jumbotron__searchLinkMultiIcon--searchText[data-koshu-num='0']"
-    # data-koshu-numが存在しない、または存在するならば0、という条件で検索
-  )
-
-kensho_kensaku_botan_text <-
-  kensho_kensaku_botan_nodes |> 
-  html_text2()
-
-
-# 押下後のフルリンクを作成
-
-kensho_schools_full_url =
-  if_else(
-    str_detect(kensho_kensaku_botan_text, "[0-9]"),
-    str_c(
-      "https://shingakunet.com/searchList/jl_",
-      kensho_schools_link_l,
-      "/jm_",
-      kensho_schools_link_m,
-      "/js_",
-      kensho_schools_link_s,
-      "/"
-    ),
-    str_c(
-      "https://shingakunet.com/searchList/ql_",
-      kensho_schools_link_l,
-      "/qm_",
-      kensho_schools_link_m,
-      "/qs_",
-      kensho_schools_link_s,
-      "/"
-    )
-  )
-
-
-# 「検索」を押した後のページを取得
-
-kensho_after_kensaku_nodes <- read_html(kensho_schools_full_url)
-
-
-# 件数を取得する部分のCSSセレクタを取得
-
-kensho_kensu_nodes <-
-  kensho_after_kensaku_nodes |> 
-  html_element(
-    ".__shi_l_row p span"
-  )
-
-
-# 件数を取得
-
-kensho_kensu <-
-  kensho_kensu_nodes |> 
-  html_text2() |> 
-  str_remove_all("[^0-9]") |> 
-  as.numeric()
-
-
-
-# tibbleにまとめる
-
-if (!is.na(kensho_kensu)) {
-  kensho_df_school_pages <-
-    tibble(
-      page_num = 1:(kensho_kensu%/%20+1),
-      target_url = str_c(kensho_schools_full_url, "?pn=", 1:(kensho_kensu%/%20+1))
-      # スライスの形で、1つの変数を縦に伸ばして表を作ることができる。
-    )
-}else{
-  kensho_df_school_pages <-
-    tibble(
-      page_num = 1,
-      target_url = str_c(kensho_schools_full_url, "?pn=", 1)
-      # スライスの形で、1つの変数を縦に伸ばして表を作ることができる。
-    )
-}
-
-
-df_all_qualifications$qualification_full_url[61] |> 
-  get_school_pages()
-    
-```
-
-
 
 
 すべての資格についてこれを実行し、各資格とをまとめた1つのデータフレームを作成する。
@@ -405,7 +319,7 @@ df_school_urls <-
     # get_school_pagesが返すtibbleを、丸ごとsearch_data列に格納
     all_school_urls = map(qualification_full_url, get_school_pages, .progress = TRUE)
   ) |> 
-  # 格納されたtibbleを縦に展開
+  # 格納されたtibbleを展開
   unnest(all_school_urls)
 
 ```
@@ -419,6 +333,16 @@ get_school_names <-
   function(school_url){
     
     Sys.sleep(1)
+    
+    if (is.na(school_url)) {
+      df_all_schools <-
+      tibble(
+        school_num = NA,
+        all_school_names = NA
+      )
+      
+      return(df_all_schools)
+    }
     
     school_html <- read_html(school_url)
     
@@ -435,28 +359,78 @@ get_school_names <-
       school_names <- c(NA)
     }
     
-    school_count <-
+    count_school <-
       length(school_names)
     
     df_all_schools <-
       tibble(
-        school_num = 1:school_count,
+        school_num = 1:count_school,
         all_school_names = school_names
       )
     
+    print(school_names)
     return(df_all_schools)
   }
 
+df_school_urls$all_school_urls[782] |> 
+  get_school_names()
 
-df_school_urls |> 
-  slice(1:4) |> 
+```
+
+すべての学校一覧ページから、全学校名を取得する。
+
+```{r}
+
+df_all_schools <-
+  df_school_urls |>
   mutate(
     # get_school_pagesが返すtibbleを、丸ごとsearch_data列に格納
     all_school_names = map(all_school_urls, get_school_names, .progress = TRUE)
   ) |> 
   # 格納されたtibbleを縦に展開
-  unnest(all_school_names)
+  unnest(all_school_names) |> 
+  mutate(
+    school_num = (page_num - 1) * 20 + school_num
+  )
 
+```
 
+最終的に興味のあるall_school_namesがNAになっているものを表示し、実際にホームページで学校が0件ヒットするということを確認した。
+
+```{r}
+
+df_all_schools |> 
+  filter(
+    is.na(all_school_names)
+  ) |> 
+  select(
+    category,
+    qualification,
+    num_qualifications,
+    kensu,
+    school_num,
+    all_school_names
+  )
+
+```
+
+作成した表を整理して出力する。
+
+```{r}
+
+df_output <-
+  df_all_schools |> 
+  select(
+    category,               # 資格のカテゴリ名
+    category_full_url,      # そのカテゴリのURL
+    qualification,          # 資格名
+    qualification_full_url, # その資格のURL
+    page_num,               # その資格の学校を検索したときのページ番号
+    all_school_urls,        # その資格の学校を検索したときのURL
+    school_num,             # その資格の学校の通し番号
+    all_school_names        # 学校名
+  )
+
+write_excel_csv(df_output, "output.csv")
 
 ```
